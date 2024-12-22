@@ -56,3 +56,64 @@ class PositionDataset(Dataset):
 
     def __len__(self) -> int:
         return self.dataset_size
+    
+
+def train_transformer(
+    model, 
+    optimizer, 
+    loss_fn, 
+    train_loader, 
+    test_loader, 
+    device, 
+    scheduler=None, 
+    epochs=25,
+    model_path = 'model.pt'
+):
+    train_losses, eval_losses = [], []
+    best_eval_loss = np.inf
+    for epoch in range(epochs):
+        train_loss = []
+        model.train()
+        for seqs, labels in tqdm(train_loader):
+            seqs = seqs.to(device)
+            labels = labels.to(device)
+
+            preds = F.log_softmax(model(seqs).squeeze(-1), 1)
+            optimizer.zero_grad()
+            loss = loss_fn(preds, labels)
+            loss.backward()
+            optimizer.step()
+            if not scheduler is None:
+                scheduler.step()
+            train_loss.append(loss.item())
+
+        eval_loss = []
+        model.eval()
+        with torch.no_grad():
+            for seqs, labels in tqdm(test_loader):
+                seqs = seqs.to(device)
+                labels = labels.to(device)
+
+                preds = F.log_softmax(model(seqs).squeeze(-1), 1)
+                loss = loss_fn(preds, labels)
+                eval_loss.append(loss.item())
+
+        logger.info(f'Loss_epoch {epoch + 1}: {np.mean(train_loss)}')
+        logger.info(f'Loss_eval {epoch + 1}: {np.mean(eval_loss)}')
+        train_losses.append(np.mean(train_loss))
+        eval_losses.append(np.mean(eval_loss))
+
+        if np.mean(eval_loss) < best_eval_loss:
+            best_eval_loss = np.mean(eval_loss)
+            torch.save(model.state_dict(), model_path)
+        
+    return train_losses, eval_losses
+
+
+def kendall(x):
+    """
+    Computes Kendall Correlation Coefficient with ideal order
+    """
+    n = x.shape[0]
+    ref = torch.ones(n, n).tril(diagonal=0) - torch.ones(n, n).tril(diagonal=0).permute(1, 0)
+    return x.expand(n, n).T.sub(x).sign_().mul_(ref).sum().div(n * (n-1))
